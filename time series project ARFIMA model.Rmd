@@ -1,0 +1,186 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+
+```{r}
+library(ggplot2)
+library(lubridate)
+library(tseries)
+library(forecast)
+library(zoo)
+library(fracdiff)
+library(arfima)
+
+df_visitors <- read.csv("daily-website-visitors.csv")
+
+head(df_visitors)
+
+# Convert the Date column to Date type
+df_visitors$Date <- as.Date(df_visitors$Date, format = "%m/%d/%Y")
+
+# Remove commas from numeric columns and convert them to numeric type
+df_visitors$Page.Loads <- as.numeric(gsub(",", "", df_visitors$Page.Loads))
+df_visitors$Unique.Visits <- as.numeric(gsub(",", "", df_visitors$Unique.Visits))
+df_visitors$First.Time.Visits <- as.numeric(gsub(",", "", df_visitors$First.Time.Visits))
+df_visitors$Returning.Visits <- as.numeric(gsub(",", "", df_visitors$Returning.Visits))
+```
+
+```{r}
+# Perform Augmented Dickey-Fuller test
+adf_test <- adf.test(df_visitors$Unique.Visits, alternative = "stationary")
+adf_test
+
+# Plot ACF and PACF
+par(mfrow = c(1, 2))
+acf(df_visitors$Unique.Visits, main = "ACF - Unique Visits", lag.max = 40)
+pacf(df_visitors$Unique.Visits, main = "PACF - Unique Visits", lag.max = 40)
+par(mfrow = c(1, 1))
+```
+
+
+```{r}
+# Create lagged features
+df_visitors$Lag1 <- lag(df_visitors$Unique.Visits, 1)
+df_visitors$Lag7 <- lag(df_visitors$Unique.Visits, 7)
+
+# Create rolling average features using the zoo package
+df_visitors$RollingMean7 <- rollmean(df_visitors$Unique.Visits, 7, fill = NA, align = 'right')
+
+# Remove NA values caused by lagging
+df_visitors <- na.omit(df_visitors)
+
+# Check the head of the updated dataframe
+head(df_visitors)
+```
+
+
+```{r}
+# Fit an ARFIMA model
+arfima_model <- fracdiff(df_visitors$Unique.Visits, nar = 1, nma = 1)
+summary(arfima_model)
+
+# Forecast future values
+arfima_forecast <- forecast(arfima_model, h = 30)  # Forecast for the next 30 days
+
+# Plot the forecasts
+autoplot(arfima_forecast) +
+  ggtitle("Forecast of Unique Visits") +
+  xlab("Date") +
+  ylab("Unique Visits")
+
+# Print the forecasts
+print(arfima_forecast)
+```
+
+
+```{r}
+# Evaluate the model using accuracy metrics
+accuracy(arfima_forecast)
+
+# Plot residuals
+checkresiduals(arfima_forecast)
+
+# Plot residuals ACF and PACF
+par(mfrow = c(1, 2))
+acf(residuals(arfima_forecast), main = "ACF of Residuals", lag.max = 40)
+pacf(residuals(arfima_forecast), main = "PACF of Residuals", lag.max = 40)
+par(mfrow = c(1, 1))
+```
+
+
+
+```{r}
+# Filter the training and validation datasets
+train_data <- subset(data, Date >= as.Date("2014-09-14") & Date <= as.Date("2020-07-19"))
+valid_data <- subset(data, Date >= as.Date("2020-07-20") & Date <= as.Date("2020-08-20"))
+
+# Confirm the first and last dates in the training and test sets
+train_start_date <- min(train_set$Date)
+train_end_date <- max(train_set$Date)
+test_start_date <- min(test_set$Date)
+test_end_date <- max(test_set$Date)
+
+train_start_date
+train_end_date
+test_start_date
+test_end_date
+```
+
+
+
+```{r}
+# Create a time series object for the training set
+train_ts <- ts(train_set$Unique.Visits, frequency = 365, start = c(year(train_start_date), yday(train_start_date)))
+
+# Fit the model on the training set
+arfima_model_train <- fracdiff(train_ts, nar = 1, nma = 1)
+
+# Forecast on the test set
+forecast_horizon <- nrow(test_set)
+forecast <- forecast(arfima_model_train, h = forecast_horizon)
+
+# Create a time series object for the test set
+test_ts <- ts(test_set$Unique.Visits, frequency = 365, start = c(year(test_start_date), yday(test_start_date)))
+```
+
+```{r}
+summary(arfima_model_train)
+```
+
+
+```{r}
+autoplot(forecast) +
+  labs(title = "Forecast Unique Visits", x = "Date", y = "Unique Visits") +
+  theme_minimal()
+```
+
+
+```{r}
+# Plot the forecast vs actual
+autoplot(forecast) +
+  autolayer(test_ts, series = "Actual") +
+  labs(title = "Forecast vs Actual Unique Visits", x = "Date", y = "Unique Visits") +
+  theme_minimal()
+
+# Evaluate the model on the test set
+accuracy(forecast, test_ts)
+```
+
+
+```{r}
+# Evaluate the model using accuracy metrics
+accuracy(forecast)
+
+# Plot residuals
+checkresiduals(forecast)
+
+# Plot residuals ACF and PACF
+par(mfrow = c(1, 2))
+acf(residuals(forecast), main = "ACF of Residuals", lag.max = 40)
+pacf(residuals(forecast), main = "PACF of Residuals", lag.max = 40)
+par(mfrow = c(1, 1))
+```
+
+```{r}
+test_ts
+```
+
+
+```{r}
+# Indexing the predicted and actual data from 1 to 31
+index <- 1:232
+predicted_values <- forecast$mean[1:232]
+actual_values <- test_ts
+
+```
+
+```{r}
+# Plotting the forecasted values against the actual values with indexed x-axis
+plot(index, predicted_values, type = "l", col = "blue", xlab = "Day", ylab = "Visits", main = "Forecast vs Actual", ylim = range(c(predicted_values, actual_values)))
+lines(index, actual_values, col = "red")
+legend("topleft", legend = c("Forecast", "Actual"), col = c("blue", "red"), lty = 1)
+```
+
